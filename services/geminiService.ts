@@ -2,67 +2,59 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function summarizeText(transcript: string): Promise<string> {
   if (!transcript?.trim()) {
-    throw new Error("No transcript provided for summarization.");
+    throw new Error("No transcript to summarize.");
   }
 
-  // Safely get env key (undefined is okay here)
-  const envApiKey = typeof import.meta.env?.VITE_GEMINI_API_KEY === 'string' 
-    ? import.meta.env.VITE_GEMINI_API_KEY.trim() 
-    : "";
+  // TRY env var first (Vercel/Netlify), then user input, then fail gracefully
+  let apiKey = "";
+  
+  // 1. Check environment variable (Vercel/Netlify injected)
+  try {
+    apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
+  } catch {}
 
-  const userApiKey = typeof localStorage !== 'undefined' 
-    ? (localStorage.getItem("geminiApiKey")?.trim() || "") 
-    : "";
-
-  const apiKey = envApiKey || userApiKey;
+  // 2. Fallback: User-entered key from localStorage
+  if (!apiKey) {
+    try {
+      apiKey = (localStorage.getItem("geminiApiKey") || "").trim();
+    } catch {}
+  }
 
   if (!apiKey) {
-    throw new Error("No Gemini API key available. Please enter one in the app or configure it in your hosting environment.");
+    throw new Error("Enter your Gemini API key first (get free from aistudio.google.com)");
   }
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const prompt = `
-You are an expert homeopathic doctor. Analyze the patient consultation transcript below.
+    const prompt = `Expert homeopath: Summarize this consultation in bullet points:
 
-Provide a structured summary with:
-- Main complaints and symptoms
-- Modalities (better/worse)
-- Mental/emotional state
-- Key rubrics
-- Top 3 possible remedy suggestions with brief reasoning
+Symptoms: 
+Modalities: 
+Mental state: 
+Top 3 remedies:
 
-Transcript:
-${transcript}
-
-Use clear bullet points.
-    `.trim();
+Transcript: ${transcript}`;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-
-    return text.trim() || "No summary generated.";
+    return (await result.response.text()).trim() || "No summary generated.";
   } catch (error: any) {
     console.error("Gemini error:", error);
-    throw new Error(`Summarization failed: ${error.message || "Unknown error"}`);
+    throw new Error(error.message?.includes("API key") 
+      ? "Invalid API key. Get new one from aistudio.google.com" 
+      : `Summarization failed: ${error.message}`);
   }
 }
 
 export function saveUserGeminiKey(key: string) {
-  if (typeof localStorage !== 'undefined' && key?.trim()) {
-    localStorage.setItem("geminiApiKey", key.trim());
-  }
+  if (key?.trim()) localStorage.setItem("geminiApiKey", key.trim());
 }
 
 export function hasApiKey(): boolean {
-  const envKey = typeof import.meta.env?.VITE_GEMINI_API_KEY === 'string' 
-    ? import.meta.env.VITE_GEMINI_API_KEY.trim() 
-    : "";
-  const userKey = typeof localStorage !== 'undefined' 
-    ? (localStorage.getItem("geminiApiKey")?.trim() || "") 
-    : "";
-  return !!(envKey || userKey);
+  try {
+    return !!(import.meta.env.VITE_GEMINI_API_KEY?.trim() || localStorage.getItem("geminiApiKey")?.trim());
+  } catch {
+    return false;
+  }
 }
