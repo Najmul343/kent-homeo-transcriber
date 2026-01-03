@@ -1,0 +1,7 @@
+{
+  "name": "KentHomeo AI",
+  "description": "Professional Homeopathic case-taking tool. Transcribes patient narratives (Urdu/English), incorporates doctor insights, structures cases via the Kentian Method, and extracts rubrics for Kent's Repertory.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
