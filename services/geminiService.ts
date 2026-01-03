@@ -1,151 +1,62 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-import { GoogleGenAI } from "@google/genai";
-import { blobToBase64 } from "../utils/audioUtils";
+// Function to summarize the transcribed text using Gemini
+export async function summarizeText(transcript: string): Promise<string> {
+  // Prioritize the API key from Vite environment variable (set in Vercel)
+  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // Optional fallback: Allow user to provide their own key via localStorage
+  // (Keeps the original behavior if you have a key input field)
+  const userApiKey = localStorage.getItem("geminiApiKey")?.trim() || "";
 
-const MODEL_NAME = 'gemini-3-pro-preview';
+  const apiKey = envApiKey || userApiKey;
 
-/**
- * Transcribes audio into Hinglish/Hindi with English medical terms.
- */
-export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
-  try {
-    const base64Audio = await blobToBase64(audioBlob);
-    const mimeType = audioBlob.type || 'audio/webm';
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Audio
-            }
-          },
-          {
-            text: `
-            You are a medical scribe for a Homeopathic Doctor. 
-            Listen to the patient/doctor interaction and transcribe with these rules:
-            1. **Language**: Transcribe in Hinglish (Romanized Hindi/Urdu) or Hindi script.
-            2. **English Medical Terms**: Always use standard English for medical terms or specific anatomical descriptions.
-            3. **Clarity**: Ensure the patient's narrative regarding their pain, feelings, and modalities is captured accurately.
-            Return ONLY the transcript.
-            `
-          }
-        ]
-      }
-    });
-
-    return response.text?.trim() || "No transcription available.";
-  } catch (error) {
-    console.error("Transcription Error:", error);
-    throw error;
+  if (!apiKey) {
+    throw new Error(
+      "No Gemini API key provided. Please set VITE_GEMINI_API_KEY in your hosting platform or enter one in the app settings."
+    );
   }
-};
 
-/**
- * Generates a Kentian Case Analysis in STRICT ENGLISH.
- */
-export const generateKentianCase = async (segments: string[]): Promise<string> => {
+  // Initialize the Gemini client
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // Use the gemini-1.5-flash model (fast and cost-effective; change to gemini-1.5-pro if needed)
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+  // Craft a prompt suitable for homeopathic repertorization or general summary
+  // You can customize this prompt based on your app's needs
+  const prompt = `
+You are an expert homeopathic practitioner. Summarize the following patient consultation transcript in a structured repertory format.
+Highlight key symptoms, modalities, mental/emotional states, and suggest possible rubrics or remedies if relevant.
+
+Transcript:
+${transcript}
+
+Provide a concise, structured summary.
+  `.trim();
+
   try {
-    const joinedText = segments.join("\n\n");
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: {
-        parts: [
-          {
-            text: `
-            Analyze the following patient narrative and structure it into a formal Homeopathic Case using the Kentian Method.
-            
-            IMPORTANT: ALL OUTPUT MUST BE IN PROFESSIONAL MEDICAL ENGLISH.
-            
-            Structure:
-            1. **MIND**: Mental and emotional state, fears, temperament, and dispositional symptoms.
-            2. **PHYSICAL GENERALS**: Thermal state (chilly/hot), cravings/aversions, sleep patterns, appetite, and general modalities (weather, time, etc.).
-            3. **PARTICULARS**: Specific organ or systemic symptoms. Use the LSMC format (Location, Sensation, Modality, Concomitants).
-            
-            Input Data (Transcript/Notes):
-            ${joinedText}
-            `
-          }
-        ]
-      }
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    return response.text?.trim() || "Could not generate case analysis.";
-  } catch (error) {
-    console.error("Case Generation Error:", error);
-    throw error;
+    return text || "No summary generated.";
+  } catch (error: any) {
+    console.error("Gemini summarization error:", error);
+    throw new Error(
+      `Failed to summarize: ${error.message || "Unknown error"}`
+    );
   }
-};
+}
 
-/**
- * Extracts Rubrics in standard Repertory English.
- */
-export const extractKentRubrics = async (segments: string[]): Promise<string> => {
-  try {
-    const joinedText = segments.join("\n\n");
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: {
-        parts: [
-          {
-            text: `
-            Identify potential Rubrics from this narrative for Kent's Repertory of Homeopathic Materia Medica.
-            
-            IMPORTANT: OUTPUT MUST BE IN ENGLISH ONLY. Use standard repertory terminology.
-            
-            Format: [Chapter] - [Main Rubric]: [Sub-rubric], [Sub-sub-rubric]
-            Example: 
-            STOMACH - DESIRES: sweets.
-            MIND - FEAR: dark, of the.
-            
-            Narrative Data:
-            ${joinedText}
-            `
-          }
-        ]
-      }
-    });
+// Optional: Helper to save user-provided key (if you keep a key input field)
+export function saveUserGeminiKey(key: string) {
+  localStorage.setItem("geminiApiKey", key.trim());
+}
 
-    return response.text?.trim() || "No rubrics identified.";
-  } catch (error) {
-    console.error("Rubric Extraction Error:", error);
-    throw error;
-  }
-};
-
-/**
- * Professional AI Consultant answering in English.
- */
-export const chatWithTranscript = async (context: string, question: string): Promise<string> => {
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          {
-            text: `
-            You are an expert Homeopathic Consultant. 
-            Context: "${context}"
-            
-            Doctor's Inquiry: "${question}"
-            
-            Rules:
-            - Respond strictly in English.
-            - Be concise and professional.
-            - Reference Kent's philosophy or repertory where relevant.
-            `
-          }
-        ]
-      }
-    });
-    
-    return response.text || "I could not generate an answer.";
-  } catch (error) {
-    console.error("Chat Error:", error);
-    throw error;
-  }
-};
+// Optional: Get current effective key (for display or debugging)
+export function getCurrentApiKey(): string {
+  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
+  const userApiKey = localStorage.getItem("geminiApiKey")?.trim() || "";
+  return envApiKey || userApiKey || "";
+}
