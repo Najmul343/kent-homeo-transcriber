@@ -125,13 +125,13 @@ const App: React.FC = () => {
             nextStartTimeRef.current = 0;
           }
         },
-        onerror: () => setErrorMsg("Live Session Error"),
+        onerror: (err: any) => setErrorMsg(err?.message || "Live Session Error"),
         onclose: () => stopLiveSession()
       });
 
       liveSessionRef.current = await sessionPromise;
-    } catch (err) {
-      setErrorMsg("Failed to start Live Consultation");
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Failed to start Live Consultation");
       stopLiveSession();
     }
   };
@@ -149,36 +149,42 @@ const App: React.FC = () => {
       mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
       mediaRecorder.start();
       setAppState(AppState.RECORDING);
-    } catch (err) {
-      setErrorMsg("Microphone access denied.");
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Microphone access denied.");
       setAppState(AppState.ERROR);
     }
   };
 
   const stopAndProcess = () => {
     if (!mediaRecorderRef.current) return;
+    setAppState(AppState.PROCESSING);
+    
     new Promise<void>((resolve) => {
       mediaRecorderRef.current!.onstop = () => resolve();
       mediaRecorderRef.current!.stop();
     }).then(() => {
+      if (audioChunksRef.current.length === 0) {
+        setErrorMsg("No audio data recorded.");
+        setAppState(AppState.IDLE);
+        return;
+      }
       const blob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current!.mimeType });
       processAudio(blob);
     });
-    setAppState(AppState.PROCESSING);
   };
 
   const processAudio = async (blob: Blob) => {
     try {
+      setErrorMsg(null);
       const text = await transcribeAudio(blob);
       setSegments(prev => [...prev, { id: Date.now().toString(), text, timestamp: Date.now() }]);
       setAppState(AppState.IDLE);
-    } catch (err) {
-      setErrorMsg("Transcription failed.");
+    } catch (err: any) {
+      setErrorMsg(`Transcription Error: ${err.message}`);
       setAppState(AppState.IDLE);
     }
   };
 
-  // Added handleManualSubmit to fix compilation error and handle clinical note additions
   const handleManualSubmit = () => {
     if (manualInputText.trim()) {
       setSegments(prev => [...prev, { 
@@ -197,7 +203,7 @@ const App: React.FC = () => {
     try {
       const result = await generateKentianCase(segments.map(s => s.text));
       setCaseAnalysis(result);
-    } catch (err) { setErrorMsg("Analysis failed."); } finally { setAppState(AppState.IDLE); }
+    } catch (err: any) { setErrorMsg(`Analysis failed: ${err.message}`); } finally { setAppState(AppState.IDLE); }
   };
 
   const handleExtractRubrics = async () => {
@@ -206,7 +212,7 @@ const App: React.FC = () => {
     try {
       const result = await extractKentRubrics(segments.map(s => s.text));
       setRubrics(result);
-    } catch (err) { setErrorMsg("Extraction failed."); } finally { setAppState(AppState.IDLE); }
+    } catch (err: any) { setErrorMsg(`Extraction failed: ${err.message}`); } finally { setAppState(AppState.IDLE); }
   };
 
   const hasContent = segments.length > 0 || caseAnalysis || rubrics;
@@ -226,7 +232,7 @@ const App: React.FC = () => {
             </div>
           </div>
           {hasContent && (
-            <button onClick={() => { if(confirm("Reset all case data?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setChatMessages([]); }}} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">RESET</button>
+            <button onClick={() => { if(confirm("Reset all case data?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setChatMessages([]); setErrorMsg(null); }}} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">RESET</button>
           )}
         </div>
       </header>
@@ -275,7 +281,18 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {errorMsg && <div className="bg-red-50 text-red-600 p-3 rounded-xl border border-red-100 text-xs text-center mb-4">{errorMsg}</div>}
+          {errorMsg && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-2xl border border-red-100 text-xs font-medium mb-4 flex gap-3 items-start animate-fade-in-up">
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <div className="flex-1">
+                <p className="font-bold mb-1 uppercase tracking-wider">Clinical Error</p>
+                {errorMsg}
+              </div>
+              <button onClick={() => setErrorMsg(null)} className="text-red-400 hover:text-red-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+          )}
 
           {caseAnalysis && <ResultCard text={caseAnalysis} type="CASE" onDelete={() => setCaseAnalysis(null)} />}
           {rubrics && <ResultCard text={rubrics} type="RUBRICS" onDelete={() => setRubrics(null)} />}
