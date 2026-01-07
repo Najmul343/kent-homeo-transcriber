@@ -4,11 +4,12 @@ import { blobToBase64 } from "../utils/audioUtils";
 
 /**
  * Service for interacting with Google Gemini API.
- * Accepts an explicit apiKey to support manual user configuration.
+ * 
+ * Update: Switched Pro tasks to Flash-3 with Thinking Budget to resolve 429 Quota errors.
+ * Gemini 3 Flash has much higher rate limits than Pro.
  */
 
 const FLASH_MODEL = 'gemini-3-flash-preview';
-const PRO_MODEL = 'gemini-3-pro-preview';
 const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
 export const connectLiveConsultation = (apiKey: string, callbacks: any) => {
@@ -80,16 +81,20 @@ export const generateKentianCase = async (apiKey: string, segments: string[]): P
     const ai = new GoogleGenAI({ apiKey });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
-      model: PRO_MODEL,
+      model: FLASH_MODEL,
       contents: {
         parts: [{
-          text: `You are a Kentian Homeopath. Analyze this clinical data and produce a professional case summary with headers: MIND, PHYSICAL GENERALS, and PARTICULARS.\n\nData:\n${joinedText}`
+          text: `You are a Kentian Homeopath. Analyze this clinical data and produce a professional case summary with headers: MIND, PHYSICAL GENERALS, and PARTICULARS. Focus on key symptoms using the LSMC (Location, Sensation, Modality, Concomitants) framework where applicable.\n\nData:\n${joinedText}`
         }]
+      },
+      config: {
+        // Adding thinking budget allows Flash to perform deeper reasoning without hitting Pro quota limits
+        thinkingConfig: { thinkingBudget: 16000 }
       }
     });
     return response.text || "Case generation failed.";
   } catch (error: any) {
-    throw new Error(error.message || "Analysis failed.");
+    throw new Error(error.message || "Analysis failed due to quota or network issues.");
   }
 };
 
@@ -98,15 +103,22 @@ export const extractKentRubrics = async (apiKey: string, segments: string[]): Pr
     const ai = new GoogleGenAI({ apiKey });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
-      model: PRO_MODEL,
+      model: FLASH_MODEL,
       contents: {
         parts: [{
-          text: `Extract Homeopathic Rubrics from Kent's Repertory based on this data. Format: CHAPTER - RUBRIC: sub-rubric.\n\nData:\n${joinedText}`
+          text: `Extract Homeopathic Rubrics from Kent's Repertory based on this clinical data. 
+          Format: CHAPTER - RUBRIC: sub-rubric (Degree)
+          Only include rubrics that are clearly supported by the patient's narrative.
+          
+          Data:\n${joinedText}`
         }]
+      },
+      config: {
+        thinkingConfig: { thinkingBudget: 16000 }
       }
     });
     return response.text || "Rubric extraction failed.";
   } catch (error: any) {
-    throw new Error(error.message || "Extraction failed.");
+    throw new Error(error.message || "Extraction failed due to quota or network issues.");
   }
 };
