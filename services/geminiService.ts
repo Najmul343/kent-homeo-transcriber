@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Modality } from "@google/genai";
 import { blobToBase64 } from "../utils/audioUtils";
 
@@ -5,15 +6,22 @@ const MODEL_NAME = 'gemini-3-pro-preview';
 
 /**
  * Helper to get an AI instance safely.
- * Initializing inside the function call ensures that if process.env.API_KEY 
- * is shimmed or replaced by the build tool, it happens at the right time.
  */
 const getAi = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API_KEY is missing. Please check your environment variables.");
+  try {
+    // In some environments, process.env.API_KEY is replaced during build.
+    // We access it cautiously to avoid ReferenceErrors.
+    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : (window as any).process?.env?.API_KEY;
+    
+    if (!apiKey) {
+      console.error("Gemini API Key is missing from environment variables.");
+      throw new Error("API_KEY_MISSING");
+    }
+    return new GoogleGenAI({ apiKey });
+  } catch (e) {
+    console.error("Error initializing GoogleGenAI:", e);
+    throw e;
   }
-  return new GoogleGenAI({ apiKey });
 };
 
 export const connectLiveConsultation = (callbacks: any) => {
@@ -44,11 +52,17 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   try {
     const ai = getAi();
     const base64Audio = await blobToBase64(audioBlob);
-    const mimeType = audioBlob.type || 'audio/webm';
+    
+    // Clean MIME type: Gemini prefers 'audio/webm' over 'audio/webm;codecs=opus'
+    let mimeType = audioBlob.type || 'audio/webm';
+    if (mimeType.includes(';')) {
+      mimeType = mimeType.split(';')[0];
+    }
 
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: {
+      contents: [{
+        role: 'user',
         parts: [
           {
             inlineData: {
@@ -60,12 +74,12 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
             text: `Transcribe this homeopathic consultation narrative. Use Hinglish/Urdu/Hindi for patient symptoms but English for medical terms.`
           }
         ]
-      }
+      }]
     });
 
     return response.text?.trim() || "No transcription available.";
   } catch (error: any) {
-    console.error("Transcription Error:", error);
+    console.error("Transcription API Error:", error);
     throw error;
   }
 };
@@ -76,16 +90,16 @@ export const generateKentianCase = async (segments: string[]): Promise<string> =
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: {
-        parts: [
-          {
-            text: `Analyze this narrative and structure it into a Kentian Case (MIND, PHYSICAL GENERALS, PARTICULARS - LSMC). Use STRICT MEDICAL ENGLISH.\n\n${joinedText}`
-          }
-        ]
-      }
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: `Analyze this narrative and structure it into a Kentian Case (MIND, PHYSICAL GENERALS, PARTICULARS - LSMC). Use STRICT MEDICAL ENGLISH.\n\n${joinedText}`
+        }]
+      }]
     });
     return response.text?.trim() || "Could not generate case analysis.";
   } catch (error: any) {
+    console.error("Case Generation Error:", error);
     throw error;
   }
 };
@@ -96,16 +110,16 @@ export const extractKentRubrics = async (segments: string[]): Promise<string> =>
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: {
-        parts: [
-          {
-            text: `Identify Rubrics for Kent's Repertory from this data. Format: CHAPTER - RUBRIC: sub-rubric. Use English ONLY.\n\n${joinedText}`
-          }
-        ]
-      }
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: `Identify Rubrics for Kent's Repertory from this data. Format: CHAPTER - RUBRIC: sub-rubric. Use English ONLY.\n\n${joinedText}`
+        }]
+      }]
     });
     return response.text?.trim() || "No rubrics identified.";
   } catch (error: any) {
+    console.error("Rubric Extraction Error:", error);
     throw error;
   }
 };
@@ -115,16 +129,16 @@ export const chatWithTranscript = async (context: string, question: string): Pro
     const ai = getAi();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          {
-            text: `Expert Homeopathic Consultant context: "${context}". Question: "${question}". Answer in English.`
-          }
-        ]
-      }
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: `Expert Homeopathic Consultant context: "${context}". Question: "${question}". Answer in English.`
+        }]
+      }]
     });
     return response.text || "I could not generate an answer.";
   } catch (error: any) {
+    console.error("Chat Error:", error);
     throw error;
   }
 };
