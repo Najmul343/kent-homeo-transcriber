@@ -21,11 +21,6 @@ const App: React.FC = () => {
   const nextStartTimeRef = useRef(0);
   const liveSourcesRef = useRef(new Set<AudioBufferSourceNode>());
 
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [isChatLoading, setIsChatLoading] = useState(false);
-
   const [isManualInputOpen, setIsManualInputOpen] = useState(false);
   const [manualInputText, setManualInputText] = useState("");
 
@@ -36,13 +31,11 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isRecording = appState === AppState.RECORDING;
-  const isPaused = appState === AppState.PAUSED;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [segments, caseAnalysis, rubrics, appState, isLiveOpen, liveTranscription]);
 
-  // Live Audio Cleanup
   const stopLiveSession = () => {
     if (liveSessionRef.current) {
       liveSessionRef.current.close();
@@ -59,7 +52,6 @@ const App: React.FC = () => {
     liveSourcesRef.current.clear();
     setIsLiveOpen(false);
     setAppState(AppState.IDLE);
-    // Add the final transcription to segments if it's substantial
     if (liveTranscription.trim()) {
       setSegments(prev => [...prev, { id: Date.now().toString(), text: `[Live Session]: ${liveTranscription}`, timestamp: Date.now() }]);
     }
@@ -119,11 +111,6 @@ const App: React.FC = () => {
             liveSourcesRef.current.add(source);
             source.onended = () => liveSourcesRef.current.delete(source);
           }
-          if (message.serverContent?.interrupted) {
-            liveSourcesRef.current.forEach(s => s.stop());
-            liveSourcesRef.current.clear();
-            nextStartTimeRef.current = 0;
-          }
         },
         onerror: (err: any) => setErrorMsg(err?.message || "Live Session Error"),
         onclose: () => stopLiveSession()
@@ -142,12 +129,20 @@ const App: React.FC = () => {
       setIsManualInputOpen(false);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/mp4';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-      mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
-      mediaRecorder.start();
+      
+      mediaRecorder.ondataavailable = (event) => { 
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data); 
+        }
+      };
+      
+      mediaRecorder.start(1000); // Collect data every second for safety
       setAppState(AppState.RECORDING);
     } catch (err: any) {
       setErrorMsg(err?.message || "Microphone access denied.");
@@ -159,18 +154,23 @@ const App: React.FC = () => {
     if (!mediaRecorderRef.current) return;
     setAppState(AppState.PROCESSING);
     
-    new Promise<void>((resolve) => {
-      mediaRecorderRef.current!.onstop = () => resolve();
-      mediaRecorderRef.current!.stop();
-    }).then(() => {
+    const mimeType = mediaRecorderRef.current.mimeType;
+    
+    mediaRecorderRef.current.onstop = () => {
+      // Ensure we have chunks
       if (audioChunksRef.current.length === 0) {
-        setErrorMsg("No audio data recorded.");
+        setErrorMsg("Recording failed: No audio chunks captured.");
         setAppState(AppState.IDLE);
         return;
       }
-      const blob = new Blob(audioChunksRef.current, { type: mediaRecorderRef.current!.mimeType });
+      const blob = new Blob(audioChunksRef.current, { type: mimeType });
       processAudio(blob);
-    });
+      
+      // Stop the tracks to release the microphone
+      streamRef.current?.getTracks().forEach(track => track.stop());
+    };
+    
+    mediaRecorderRef.current.stop();
   };
 
   const processAudio = async (blob: Blob) => {
@@ -203,7 +203,11 @@ const App: React.FC = () => {
     try {
       const result = await generateKentianCase(segments.map(s => s.text));
       setCaseAnalysis(result);
-    } catch (err: any) { setErrorMsg(`Analysis failed: ${err.message}`); } finally { setAppState(AppState.IDLE); }
+    } catch (err: any) { 
+      setErrorMsg(`Analysis failed: ${err.message}`); 
+    } finally { 
+      setAppState(AppState.IDLE); 
+    }
   };
 
   const handleExtractRubrics = async () => {
@@ -212,14 +216,17 @@ const App: React.FC = () => {
     try {
       const result = await extractKentRubrics(segments.map(s => s.text));
       setRubrics(result);
-    } catch (err: any) { setErrorMsg(`Extraction failed: ${err.message}`); } finally { setAppState(AppState.IDLE); }
+    } catch (err: any) { 
+      setErrorMsg(`Extraction failed: ${err.message}`); 
+    } finally { 
+      setAppState(AppState.IDLE); 
+    }
   };
 
   const hasContent = segments.length > 0 || caseAnalysis || rubrics;
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans overflow-hidden">
-      {/* Header */}
       <header className="flex-none bg-white border-b border-slate-200 p-4 z-10 shadow-sm">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -232,12 +239,11 @@ const App: React.FC = () => {
             </div>
           </div>
           {hasContent && (
-            <button onClick={() => { if(confirm("Reset all case data?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setChatMessages([]); setErrorMsg(null); }}} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">RESET</button>
+            <button onClick={() => { if(confirm("Reset all case data?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setErrorMsg(null); }}} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">RESET</button>
           )}
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4 pb-44 space-y-4">
         <div className="max-w-md mx-auto">
           {isLiveOpen && (
@@ -261,13 +267,6 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
-              <div className="mt-4 flex justify-center">
-                <div className="flex gap-1 h-8 items-center">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="w-1 bg-teal-400 rounded-full animate-bounce" style={{ height: `${Math.random() * 100}%`, animationDelay: `${i * 0.1}s` }}></div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 
@@ -277,7 +276,7 @@ const App: React.FC = () => {
                 <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
               </div>
               <h2 className="text-slate-900 font-bold text-xl">Hands-Free Case Taking</h2>
-              <p className="text-slate-500 text-sm mt-3 leading-relaxed">Choose "Live Consultation" for real-time conversation or use the recorder to transcribe a case.</p>
+              <p className="text-slate-500 text-sm mt-3 leading-relaxed">Ensure API_KEY is set in environment variables for transcription to work.</p>
             </div>
           )}
 
@@ -306,14 +305,13 @@ const App: React.FC = () => {
           {appState === AppState.PROCESSING && !isLiveOpen && (
              <div className="flex flex-col items-center justify-center p-12 space-y-4 animate-pulse">
                <div className="w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div>
-               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Analyzing Medical Data</p>
+               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Processing Clinical Audio...</p>
              </div>
           )}
           <div ref={bottomRef} />
         </div>
       </main>
 
-      {/* Footer Controls */}
       <footer className="flex-none bg-white border-t border-slate-200 p-4 safe-area-pb shadow-2xl z-20">
         <div className="max-w-md mx-auto space-y-4">
           
@@ -347,7 +345,6 @@ const App: React.FC = () => {
               <span className="text-[9px] font-bold uppercase">Note</span>
             </button>
 
-            {/* Main Primary Button: Live or Record */}
             <div className="relative">
               {!isLiveOpen ? (
                 <div className="flex gap-4 items-center">
