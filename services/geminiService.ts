@@ -1,30 +1,30 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { blobToBase64 } from "../utils/audioUtils";
 
-// Model constants
-const CASE_MODEL = 'gemini-3-pro-preview';
-const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
-const TRANSCRIPTION_MODEL = 'gemini-3-flash-preview';
-
 /**
- * Creates a fresh AI instance using the globally provided API_KEY.
- * Per instructions, we assume process.env.API_KEY is pre-configured by the environment.
+ * Service for interacting with Google Gemini API.
+ * 
+ * Guidelines used:
+ * - Use 'gemini-3-pro-preview' for complex clinical reasoning.
+ * - Use 'gemini-2.5-flash-native-audio-preview-12-2025' for audio modality tasks.
+ * - Initialize new GoogleGenAI({ apiKey: process.env.API_KEY }) directly.
  */
-const getAi = () => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-};
+
+const AUDIO_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const PRO_MODEL = 'gemini-3-pro-preview';
 
 export const connectLiveConsultation = (callbacks: any) => {
-  const ai = getAi();
+  // Create instance right before connection
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   return ai.live.connect({
-    model: LIVE_MODEL,
+    model: AUDIO_MODEL,
     callbacks,
     config: {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
       },
-      systemInstruction: 'You are an expert Homeopathic Consultant specializing in Kent\'s Method. Listen to the doctor/patient and assist in real-time.',
+      systemInstruction: 'You are an expert Kentian Homeopathic Consultant. Listen to the case taking process and assist the doctor by suggesting rubrics and identifying key symptoms using the LSMC framework.',
       inputAudioTranscription: {},
       outputAudioTranscription: {},
     },
@@ -33,34 +33,23 @@ export const connectLiveConsultation = (callbacks: any) => {
 
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   try {
-    if (audioBlob.size === 0) {
-      throw new Error("Recording is empty.");
-    }
+    if (audioBlob.size === 0) throw new Error("Audio recording is empty.");
 
-    const ai = getAi();
+    // Direct initialization to ensure process.env.API_KEY is properly accessed
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const base64Audio = await blobToBase64(audioBlob);
     
-    // Clean and normalize MIME type
+    // Normalize and clean MIME type for API compatibility
     let mimeType = audioBlob.type || 'audio/webm';
-    if (mimeType.includes(';')) {
-      mimeType = mimeType.split(';')[0];
-    }
+    if (mimeType.includes(';')) mimeType = mimeType.split(';')[0];
     
-    // Map common mobile/browser types to Gemini supported ones
     const supportedMimes = ['audio/wav', 'audio/mp3', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac', 'audio/webm', 'audio/mp4'];
     if (!supportedMimes.includes(mimeType)) {
-      // If the mime type is something like audio/x-m4a, treat it as audio/mp4 for the API
-      if (mimeType.includes('m4a')) {
-        mimeType = 'audio/mp4';
-      } else {
-        // Fallback to webm as it is the most common for MediaRecorder
-        mimeType = 'audio/webm';
-      }
+      mimeType = mimeType.includes('m4a') ? 'audio/mp4' : 'audio/webm';
     }
 
-    // Using the exact structure from documentation: contents: { parts: [...] }
     const response = await ai.models.generateContent({
-      model: TRANSCRIPTION_MODEL,
+      model: AUDIO_MODEL, 
       contents: {
         parts: [
           {
@@ -70,34 +59,39 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
             }
           },
           {
-            text: "Please transcribe this homeopathic medical recording accurately. Maintain the original language (Urdu, Hindi, or Hinglish) for the patient's actual symptoms, but provide headers in English. Format the output as a clinical transcript."
+            text: "Transcribe this homeopathic clinical recording accurately. Extract patient symptoms in their original phrasing (supporting Urdu/Hindi/English) and organize them for a medical case record."
           }
         ]
       }
     });
 
+    // Use .text property as per guidelines (not a function)
     const text = response.text;
-    if (!text) {
-      throw new Error("No transcription text was generated. The audio might be too quiet or distorted.");
-    }
+    if (!text) throw new Error("AI returned an empty response. The audio might be unclear.");
+    
     return text.trim();
   } catch (error: any) {
-    console.error("Transcription API Detailed Error:", error);
-    // Extract a more meaningful message if available from the SDK error
-    const msg = error.message || "The AI service failed to process the audio.";
-    throw new Error(msg);
+    console.error("Transcription detailed error:", error);
+    throw new Error(error.message || "The transcription service failed to process the audio.");
   }
 };
 
 export const generateKentianCase = async (segments: string[]): Promise<string> => {
   try {
-    const ai = getAi();
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
-      model: CASE_MODEL,
+      model: PRO_MODEL,
       contents: {
         parts: [{
-          text: `You are a Kentian Homeopath. Structure this patient data into a professional Case Summary with headers for MIND, PHYSICAL GENERALS, and PARTICULARS (LSMC format):\n\n${joinedText}`
+          text: `You are a Kentian Homeopath. Analyze this clinical data and produce a professional case summary. 
+          Use headers: 
+          1. MIND & DISPOSITION
+          2. PHYSICAL GENERALS (Appetite, Thirst, Sleep, Thermals)
+          3. PARTICULARS (Head to Toe - LSMC format)
+          
+          Data:
+          ${joinedText}`
         }]
       }
     });
@@ -110,13 +104,17 @@ export const generateKentianCase = async (segments: string[]): Promise<string> =
 
 export const extractKentRubrics = async (segments: string[]): Promise<string> => {
   try {
-    const ai = getAi();
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
-      model: CASE_MODEL,
+      model: PRO_MODEL,
       contents: {
         parts: [{
-          text: `Identify the primary Homeopathic Rubrics from Kent's Repertory based on these symptoms. Use the format CHAPTER - RUBRIC: sub-rubric:\n\n${joinedText}`
+          text: `Identify the most relevant rubrics from Kent's Repertory based on this clinical data. 
+          Format: CHAPTER - RUBRIC: sub-rubric (Degree)
+          
+          Data:
+          ${joinedText}`
         }]
       }
     });
@@ -129,18 +127,18 @@ export const extractKentRubrics = async (segments: string[]): Promise<string> =>
 
 export const chatWithTranscript = async (context: string, question: string): Promise<string> => {
   try {
-    const ai = getAi();
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
-      model: TRANSCRIPTION_MODEL,
+      model: PRO_MODEL,
       contents: {
         parts: [{
-          text: `Based on this homeopathic transcript:\n${context}\n\nAnswer this clinical question: ${question}`
+          text: `Context:\n${context}\n\nQuestion: ${question}\n\nAs a homeopathic clinical advisor, answer the question above.`
         }]
       }
     });
-    return response.text || "Could not generate an answer.";
+    return response.text || "No response generated.";
   } catch (error: any) {
-    console.error("Chat Consultation Error:", error);
-    throw new Error(error.message || "Consultation failed.");
+    console.error("Chat Error:", error);
+    throw new Error(error.message || "Consultation chat failed.");
   }
 };
