@@ -1,12 +1,23 @@
-
 import { GoogleGenAI, Modality } from "@google/genai";
 import { blobToBase64 } from "../utils/audioUtils";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const MODEL_NAME = 'gemini-3-pro-preview';
 
+/**
+ * Helper to get an AI instance safely.
+ * Initializing inside the function call ensures that if process.env.API_KEY 
+ * is shimmed or replaced by the build tool, it happens at the right time.
+ */
+const getAi = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("API_KEY is missing. Please check your environment variables.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 export const connectLiveConsultation = (callbacks: any) => {
+  const ai = getAi();
   return ai.live.connect({
     model: 'gemini-2.5-flash-native-audio-preview-12-2025',
     callbacks,
@@ -31,6 +42,7 @@ export const connectLiveConsultation = (callbacks: any) => {
 
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   try {
+    const ai = getAi();
     const base64Audio = await blobToBase64(audioBlob);
     const mimeType = audioBlob.type || 'audio/webm';
 
@@ -52,7 +64,7 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     });
 
     return response.text?.trim() || "No transcription available.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Transcription Error:", error);
     throw error;
   }
@@ -60,6 +72,7 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
 
 export const generateKentianCase = async (segments: string[]): Promise<string> => {
   try {
+    const ai = getAi();
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -72,13 +85,14 @@ export const generateKentianCase = async (segments: string[]): Promise<string> =
       }
     });
     return response.text?.trim() || "Could not generate case analysis.";
-  } catch (error) {
+  } catch (error: any) {
     throw error;
   }
 };
 
 export const extractKentRubrics = async (segments: string[]): Promise<string> => {
   try {
+    const ai = getAi();
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
@@ -91,13 +105,14 @@ export const extractKentRubrics = async (segments: string[]): Promise<string> =>
       }
     });
     return response.text?.trim() || "No rubrics identified.";
-  } catch (error) {
+  } catch (error: any) {
     throw error;
   }
 };
 
 export const chatWithTranscript = async (context: string, question: string): Promise<string> => {
   try {
+    const ai = getAi();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
@@ -109,7 +124,7 @@ export const chatWithTranscript = async (context: string, question: string): Pro
       }
     });
     return response.text || "I could not generate an answer.";
-  } catch (error) {
+  } catch (error: any) {
     throw error;
   }
 };
