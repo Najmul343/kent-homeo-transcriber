@@ -6,10 +6,16 @@
     <meta name="theme-color" content="#0f766e" />
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="KentHomeo AI">
+    
+    <!-- Primary Meta Tags -->
     <title>KentHomeo AI - Homeopathic Case Taking</title>
+    <meta name="description" content="Professional Homeopathic Case Taking & Repertorization">
+    
     <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/3063/3063176.png">
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       /* Custom scrollbar for better mobile feel */
@@ -33,17 +39,26 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
-      /* Ensure the app takes full height and prevents bounce on iOS */
+      /* Ensure the app takes full height and prevents bounce on iOS/Android */
       html, body {
         height: 100%;
         overflow: hidden;
         position: fixed;
         width: 100%;
+        background-color: #f8fafc;
       }
       #root {
         height: 100%;
         display: flex;
         flex-direction: column;
+      }
+      /* Smooth transitions for sheet animation */
+      .animate-fade-in-up {
+        animation: fadeInUp 0.3s ease-out;
+      }
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
       }
     </style>
   <script type="importmap">
