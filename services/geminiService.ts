@@ -4,19 +4,15 @@ import { blobToBase64 } from "../utils/audioUtils";
 
 /**
  * Service for interacting with Google Gemini API.
- * 
- * Model Selection:
- * - 'gemini-3-flash-preview' for general multimodal tasks (transcription).
- * - 'gemini-3-pro-preview' for complex clinical reasoning.
- * - 'gemini-2.5-flash-native-audio-preview-12-2025' for real-time live audio.
+ * Accepts an explicit apiKey to support manual user configuration.
  */
 
 const FLASH_MODEL = 'gemini-3-flash-preview';
 const PRO_MODEL = 'gemini-3-pro-preview';
 const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
-export const connectLiveConsultation = (callbacks: any) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export const connectLiveConsultation = (apiKey: string, callbacks: any) => {
+  const ai = new GoogleGenAI({ apiKey });
   return ai.live.connect({
     model: LIVE_MODEL,
     callbacks,
@@ -32,23 +28,22 @@ export const connectLiveConsultation = (callbacks: any) => {
   });
 };
 
-export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+export const transcribeAudio = async (apiKey: string, audioBlob: Blob): Promise<string> => {
   try {
-    if (!process.env.API_KEY) {
-      throw new Error("API_KEY environment variable is not set. Please add it to your environment settings.");
+    if (!apiKey) {
+      throw new Error("No API key provided. Please check your settings.");
     }
     
     if (audioBlob.size === 0) {
       throw new Error("The recorded audio file is empty.");
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
     const base64Audio = await blobToBase64(audioBlob);
     
     let mimeType = audioBlob.type || 'audio/webm';
     if (mimeType.includes(';')) mimeType = mimeType.split(';')[0];
     
-    // Fallback for non-standard mobile MIME types
     if (!mimeType.startsWith('audio/')) {
        mimeType = 'audio/webm'; 
     }
@@ -71,7 +66,7 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     });
 
     const text = response.text;
-    if (!text) throw new Error("The AI was unable to detect any speech in the audio.");
+    if (!text) throw new Error("Speech detection failed. Try speaking louder or checking your microphone.");
     
     return text.trim();
   } catch (error: any) {
@@ -80,9 +75,9 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
   }
 };
 
-export const generateKentianCase = async (segments: string[]): Promise<string> => {
+export const generateKentianCase = async (apiKey: string, segments: string[]): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
@@ -94,13 +89,13 @@ export const generateKentianCase = async (segments: string[]): Promise<string> =
     });
     return response.text || "Case generation failed.";
   } catch (error: any) {
-    throw new Error(error.message || "Failed to generate case analysis.");
+    throw new Error(error.message || "Analysis failed.");
   }
 };
 
-export const extractKentRubrics = async (segments: string[]): Promise<string> => {
+export const extractKentRubrics = async (apiKey: string, segments: string[]): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
     const joinedText = segments.join("\n\n");
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
@@ -112,23 +107,6 @@ export const extractKentRubrics = async (segments: string[]): Promise<string> =>
     });
     return response.text || "Rubric extraction failed.";
   } catch (error: any) {
-    throw new Error(error.message || "Failed to extract rubrics.");
-  }
-};
-
-export const chatWithTranscript = async (context: string, question: string): Promise<string> => {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: FLASH_MODEL,
-      contents: {
-        parts: [{
-          text: `Context:\n${context}\n\nQuestion: ${question}`
-        }]
-      }
-    });
-    return response.text || "No response generated.";
-  } catch (error: any) {
-    throw new Error(error.message || "Consultation failed.");
+    throw new Error(error.message || "Extraction failed.");
   }
 };

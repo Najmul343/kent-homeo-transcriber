@@ -1,11 +1,18 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppState, TranscriptSegment, ChatMessage } from './types';
+import { AppState, TranscriptSegment } from './types';
 import { ResultCard } from './components/ResultCard';
-import { transcribeAudio, generateKentianCase, extractKentRubrics, chatWithTranscript, connectLiveConsultation } from './services/geminiService';
+import { transcribeAudio, generateKentianCase, extractKentRubrics, connectLiveConsultation } from './services/geminiService';
 import { encode, decode, decodeAudioData } from './utils/audioUtils';
 
 const App: React.FC = () => {
+  // Key Management
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return localStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '';
+  });
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [tempKey, setTempKey] = useState(apiKey);
+
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [caseAnalysis, setCaseAnalysis] = useState<string | null>(null);
@@ -36,6 +43,13 @@ const App: React.FC = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [segments, caseAnalysis, rubrics, appState, isLiveOpen, liveTranscription]);
 
+  const saveApiKey = () => {
+    localStorage.setItem('GEMINI_API_KEY', tempKey);
+    setApiKey(tempKey);
+    setIsSettingsOpen(false);
+    setErrorMsg(null);
+  };
+
   const stopLiveSession = () => {
     if (liveSessionRef.current) {
       liveSessionRef.current.close();
@@ -60,6 +74,10 @@ const App: React.FC = () => {
   };
 
   const startLiveSession = async () => {
+    if (!apiKey) {
+      setIsSettingsOpen(true);
+      return;
+    }
     try {
       setAppState(AppState.PROCESSING);
       setIsLiveOpen(true);
@@ -72,7 +90,7 @@ const App: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const sessionPromise = connectLiveConsultation({
+      const sessionPromise = connectLiveConsultation(apiKey, {
         onopen: () => {
           setAppState(AppState.RECORDING);
           const source = inputCtx.createMediaStreamSource(stream);
@@ -124,6 +142,10 @@ const App: React.FC = () => {
   };
 
   const initRecording = async () => {
+    if (!apiKey) {
+      setIsSettingsOpen(true);
+      return;
+    }
     try {
       setErrorMsg(null);
       setIsManualInputOpen(false);
@@ -137,12 +159,10 @@ const App: React.FC = () => {
       audioChunksRef.current = [];
       
       mediaRecorder.ondataavailable = (event) => { 
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data); 
-        }
+        if (event.data.size > 0) audioChunksRef.current.push(event.data); 
       };
       
-      mediaRecorder.start(1000); // Collect data every second for safety
+      mediaRecorder.start(1000);
       setAppState(AppState.RECORDING);
     } catch (err: any) {
       setErrorMsg(err?.message || "Microphone access denied.");
@@ -153,11 +173,8 @@ const App: React.FC = () => {
   const stopAndProcess = () => {
     if (!mediaRecorderRef.current) return;
     setAppState(AppState.PROCESSING);
-    
     const mimeType = mediaRecorderRef.current.mimeType;
-    
     mediaRecorderRef.current.onstop = () => {
-      // Ensure we have chunks
       if (audioChunksRef.current.length === 0) {
         setErrorMsg("Recording failed: No audio chunks captured.");
         setAppState(AppState.IDLE);
@@ -165,18 +182,15 @@ const App: React.FC = () => {
       }
       const blob = new Blob(audioChunksRef.current, { type: mimeType });
       processAudio(blob);
-      
-      // Stop the tracks to release the microphone
       streamRef.current?.getTracks().forEach(track => track.stop());
     };
-    
     mediaRecorderRef.current.stop();
   };
 
   const processAudio = async (blob: Blob) => {
     try {
       setErrorMsg(null);
-      const text = await transcribeAudio(blob);
+      const text = await transcribeAudio(apiKey, blob);
       setSegments(prev => [...prev, { id: Date.now().toString(), text, timestamp: Date.now() }]);
       setAppState(AppState.IDLE);
     } catch (err: any) {
@@ -187,11 +201,7 @@ const App: React.FC = () => {
 
   const handleManualSubmit = () => {
     if (manualInputText.trim()) {
-      setSegments(prev => [...prev, { 
-        id: Date.now().toString(), 
-        text: manualInputText.trim(), 
-        timestamp: Date.now() 
-      }]);
+      setSegments(prev => [...prev, { id: Date.now().toString(), text: manualInputText.trim(), timestamp: Date.now() }]);
       setManualInputText("");
       setIsManualInputOpen(false);
     }
@@ -201,7 +211,7 @@ const App: React.FC = () => {
     if (segments.length === 0) return;
     setAppState(AppState.PROCESSING);
     try {
-      const result = await generateKentianCase(segments.map(s => s.text));
+      const result = await generateKentianCase(apiKey, segments.map(s => s.text));
       setCaseAnalysis(result);
     } catch (err: any) { 
       setErrorMsg(`Analysis failed: ${err.message}`); 
@@ -214,7 +224,7 @@ const App: React.FC = () => {
     if (segments.length === 0) return;
     setAppState(AppState.PROCESSING);
     try {
-      const result = await extractKentRubrics(segments.map(s => s.text));
+      const result = await extractKentRubrics(apiKey, segments.map(s => s.text));
       setRubrics(result);
     } catch (err: any) { 
       setErrorMsg(`Extraction failed: ${err.message}`); 
@@ -227,6 +237,45 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans overflow-hidden">
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 animate-fade-in-up">
+            <h3 className="text-xl font-bold text-slate-900 mb-2">Clinical Setup</h3>
+            <p className="text-slate-500 text-sm mb-6">Enter your Gemini API Key to enable transcription and analysis features.</p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Gemini API Key</label>
+                <input 
+                  type="password"
+                  value={tempKey}
+                  onChange={(e) => setTempKey(e.target.value)}
+                  placeholder="Paste AI Studio Key..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-teal-600 focus:border-transparent outline-none transition-all"
+                />
+              </div>
+              <button 
+                onClick={saveApiKey}
+                className="w-full bg-teal-700 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-teal-800 transition-colors active:scale-95"
+              >
+                Verify & Save Configuration
+              </button>
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="w-full text-slate-400 text-xs font-bold uppercase tracking-widest py-2"
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="mt-6 text-[10px] text-slate-400 leading-relaxed text-center">
+              Keys are stored locally and never sent to our servers.<br/>
+              Get your key at <a href="https://aistudio.google.com/" target="_blank" className="text-teal-600 underline">AI Studio</a>.
+            </p>
+          </div>
+        </div>
+      )}
+
       <header className="flex-none bg-white border-b border-slate-200 p-4 z-10 shadow-sm">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -238,14 +287,30 @@ const App: React.FC = () => {
               <p className="text-[10px] text-teal-600 font-bold uppercase tracking-widest">Clinical AI Assistant</p>
             </div>
           </div>
-          {hasContent && (
-            <button onClick={() => { if(confirm("Reset all case data?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setErrorMsg(null); }}} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">RESET</button>
-          )}
+          <div className="flex items-center gap-4">
+            <button onClick={() => setIsSettingsOpen(true)} className={`p-2 rounded-full transition-colors ${!apiKey ? 'text-amber-500 animate-pulse bg-amber-50' : 'text-slate-400 hover:bg-slate-50'}`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            </button>
+            {hasContent && (
+              <button onClick={() => { if(confirm("Reset case?")) { setSegments([]); setCaseAnalysis(null); setRubrics(null); setErrorMsg(null); }}} className="text-[10px] font-bold text-slate-400 hover:text-red-500 uppercase">Reset</button>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 pb-44 space-y-4">
         <div className="max-w-md mx-auto">
+          {!apiKey && (
+            <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl text-center mb-6">
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+              </div>
+              <h3 className="text-amber-900 font-bold mb-1">Configuration Required</h3>
+              <p className="text-amber-700 text-xs mb-4">Please set your Gemini API Key in the Clinical Settings to start taking cases.</p>
+              <button onClick={() => setIsSettingsOpen(true)} className="bg-amber-600 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-md">Open Settings</button>
+            </div>
+          )}
+
           {isLiveOpen && (
             <div className="bg-teal-900 text-white p-6 rounded-3xl shadow-xl mb-6 animate-fade-in-up border border-teal-800">
               <div className="flex items-center justify-between mb-4">
@@ -270,13 +335,13 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {!hasContent && !isLiveOpen && appState === AppState.IDLE && !isManualInputOpen && (
+          {!hasContent && !isLiveOpen && appState === AppState.IDLE && !isManualInputOpen && apiKey && (
             <div className="text-center py-16 px-8">
               <div className="w-20 h-20 bg-teal-50 rounded-full mx-auto mb-6 flex items-center justify-center text-teal-600">
                 <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
               </div>
               <h2 className="text-slate-900 font-bold text-xl">Hands-Free Case Taking</h2>
-              <p className="text-slate-500 text-sm mt-3 leading-relaxed">Ensure API_KEY is set in environment variables for transcription to work.</p>
+              <p className="text-slate-500 text-sm mt-3 leading-relaxed">Start recording a patient narrative or enter clinical observations manually.</p>
             </div>
           )}
 
@@ -305,7 +370,7 @@ const App: React.FC = () => {
           {appState === AppState.PROCESSING && !isLiveOpen && (
              <div className="flex flex-col items-center justify-center p-12 space-y-4 animate-pulse">
                <div className="w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div>
-               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Processing Clinical Audio...</p>
+               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Processing Clinical Insights...</p>
              </div>
           )}
           <div ref={bottomRef} />
@@ -329,7 +394,7 @@ const App: React.FC = () => {
           {isManualInputOpen && !isLiveOpen && (
             <div className="animate-fade-in-up">
               <div className="flex gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                <textarea value={manualInputText} onChange={(e) => setManualInputText(e.target.value)} placeholder="Type clinical insights..." className="flex-1 bg-transparent border-none focus:ring-0 text-sm p-1 min-h-[80px] resize-none" dir="auto" />
+                <textarea value={manualInputText} onChange={(e) => setManualInputText(e.target.value)} placeholder="Type clinical findings..." className="flex-1 bg-transparent border-none focus:ring-0 text-sm p-1 min-h-[80px] resize-none" dir="auto" />
                 <div className="flex flex-col justify-end">
                   <button onClick={handleManualSubmit} disabled={!manualInputText.trim()} className="bg-teal-700 text-white p-2.5 rounded-xl shadow-md disabled:opacity-50">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -342,7 +407,7 @@ const App: React.FC = () => {
           <div className="flex items-center justify-between px-2 py-1">
             <button onClick={() => setIsManualInputOpen(!isManualInputOpen)} className={`flex flex-col items-center gap-1 ${isManualInputOpen ? 'text-teal-700' : 'text-slate-400'}`}>
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-              <span className="text-[9px] font-bold uppercase">Note</span>
+              <span className="text-[9px] font-bold uppercase tracking-tighter">Manual</span>
             </button>
 
             <div className="relative">
@@ -375,7 +440,7 @@ const App: React.FC = () => {
 
             <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center gap-1 text-slate-400">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-              <span className="text-[9px] font-bold uppercase">Import</span>
+              <span className="text-[9px] font-bold uppercase tracking-tighter">Import</span>
               <input type="file" ref={fileInputRef} onChange={(e) => { const f = e.target.files?.[0]; if(f) { setAppState(AppState.PROCESSING); processAudio(f); } }} accept="audio/*" className="hidden" />
             </button>
           </div>
